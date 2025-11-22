@@ -1,0 +1,11 @@
+node_modules/
+credentials/
+
+uploads/rentero/
+uploads/temp/*
+
+#docs/
+
+.env
+
+.windsurf
