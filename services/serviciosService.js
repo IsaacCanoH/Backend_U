@@ -263,6 +263,34 @@ class ServiciosService {
     }
   }
 
+    async eliminarServicioDeAsignacion(estudianteUnidadId, servicioId) {
+    // buscar la relación en la tabla pivote
+    const relacion = await EstudianteUnidadServicio.findOne({
+      where: {
+        estudiante_unidad_id: estudianteUnidadId,
+        servicio_id: servicioId,
+      },
+    });
+
+    // si no existe, lanzar el mensaje que el controller espera (404)
+    if (!relacion) {
+      throw new Error("El servicio no está asociado a esta asignación");
+    }
+
+    // evitar eliminar servicios base
+    const servicio = await Servicio.findByPk(servicioId);
+    if (servicio && servicio.es_base) {
+      throw new Error("No puedes eliminar servicios base");
+    }
+
+    // "eliminar" el servicio: marcar cancelado y con fecha_fin = ahora
+    relacion.estado = "cancelado";
+    relacion.fecha_fin = new Date();
+    await relacion.save();
+
+    // devolver la asignación recalculada (mismo patrón que agregar)
+    return await this.calcularPrecioConServicios(estudianteUnidadId);
+  }
 }
 
 export default new ServiciosService();
