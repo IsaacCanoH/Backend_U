@@ -6,7 +6,9 @@ class ServicioDecorator {
   constructor(asignacionPrecio, servicio) {
     this.asignacionPrecio = asignacionPrecio;
     this.servicio = servicio;
-    this.precioServicio = parseFloat(servicio.precio) || 0;
+    this.precioServicio =
+      parseFloat((through && through.precio_snapshot) ?? servicio.precio) || 0;
+    this.through = through;
   }
 
   /**
@@ -14,6 +16,9 @@ class ServicioDecorator {
    * @returns {number} - Precio total con el servicio agregado
    */
   getPrecioTotal() {
+    if (this.servicio.es_base) {
+      return this.asignacionPrecio.getPrecioTotal();
+    }
     return this.asignacionPrecio.getPrecioTotal() + this.precioServicio;
   }
 
@@ -31,14 +36,16 @@ class ServicioDecorator {
         id: this.servicio.id,
         nombre: this.servicio.nombre,
         precio: this.precioServicio,
-        es_base: this.servicio.es_base
-      }
+        es_base: !!this.servicio.es_base,
+        estado: this.through?.estado || "activo",
+        fecha_inicio: this.through?.fecha_inicio || null,
+      },
     ];
 
     return {
       ...descripcionAnterior,
       servicios: serviciosActualizados,
-      precio_total: this.getPrecioTotal()
+      precio_total: this.getPrecioTotal(),
     };
   }
 

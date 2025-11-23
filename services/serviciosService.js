@@ -1,9 +1,9 @@
-import EstudianteUnidad from '../models/estudiante_unidad.js';
-import Unidad from '../models/unidad.js';
-import Servicio from '../models/servicio.js';
-import EstudianteUnidadServicio from '../models/estudiante_unidad_servicio.js';
-import AsignacionPrecio from '../decorators/AsignacionPrecio.js';
-import ServicioDecorator from '../decorators/ServicioDecorator.js';
+import EstudianteUnidad from "../models/estudiante_unidad.js";
+import Unidad from "../models/unidad.js";
+import Servicio from "../models/servicio.js";
+import EstudianteUnidadServicio from "../models/estudiante_unidad_servicio.js";
+import AsignacionPrecio from "../decorators/AsignacionPrecio.js";
+import ServicioDecorator from "../decorators/ServicioDecorator.js";
 
 /**
  * Servicio para gestionar servicios personalizados de estudiantes
@@ -24,7 +24,10 @@ class ServiciosService {
 
     return await Servicio.findAll({
       where,
-      order: [['es_base', 'DESC'], ['nombre', 'ASC']]
+      order: [
+        ["es_base", "DESC"],
+        ["nombre", "ASC"],
+      ],
     });
   }
 
@@ -36,8 +39,8 @@ class ServiciosService {
     return await Servicio.findAll({
       where: {
         es_base: true,
-        activo: true
-      }
+        activo: true,
+      },
     });
   }
 
@@ -47,41 +50,59 @@ class ServiciosService {
    * @returns {Promise<object>} - Objeto con desglose detallado del precio
    */
   async calcularPrecioConServicios(estudianteUnidadId) {
-    // Obtener la asignación con la unidad y sus servicios
-    const estudianteUnidad = await EstudianteUnidad.findByPk(estudianteUnidadId, {
-      include: [
-        {
-          model: Unidad,
-          as: 'unidad',
-          required: true
-        },
-        {
-          model: Servicio,
-          as: 'servicios',
-          through: { attributes: ['fecha_agregado'] }
-        }
-      ]
-    });
-
-    if (!estudianteUnidad) {
-      throw new Error('Asignación no encontrada');
-    }
-
-    if (!estudianteUnidad.unidad) {
-      throw new Error('Unidad asociada no encontrada');
-    }
-
-    // Crear el componente base con la asignación y la unidad
-    let asignacionConPrecio = new AsignacionPrecio(estudianteUnidad, estudianteUnidad.unidad);
-
-    // Aplicar decoradores para cada servicio que el estudiante eligió
-    if (estudianteUnidad.servicios && estudianteUnidad.servicios.length > 0) {
-      for (const servicio of estudianteUnidad.servicios) {
-        asignacionConPrecio = new ServicioDecorator(asignacionConPrecio, servicio);
+    const estudianteUnidad = await EstudianteUnidad.findByPk(
+      estudianteUnidadId,
+      {
+        include: [
+          { model: Unidad, as: "unidad", required: true },
+          {
+            model: Servicio,
+            as: "servicios",
+            through: {
+              attributes: [
+                "fecha_agregado",
+                "precio_snapshot",
+                "estado",
+                "fecha_inicio",
+                "fecha_fin",
+              ],
+            },
+          },
+        ],
       }
+    );
+
+    if (!estudianteUnidad) throw new Error("Asignación no encontrada");
+    if (!estudianteUnidad.unidad)
+      throw new Error("Unidad asociada no encontrada");
+
+    const now = new Date();
+    // sólo servicios cuya relación está "activo" y cuya fecha_inicio <= now y (fecha_fin nula o > now)
+    const serviciosActivos = (estudianteUnidad.servicios || []).filter(
+      (srv) => {
+        const link = srv.estudiante_unidad_servicio || {};
+        const estado = link.estado || "activo";
+        const fi = link.fecha_inicio
+          ? new Date(link.fecha_inicio)
+          : new Date(0);
+        const ff = link.fecha_fin ? new Date(link.fecha_fin) : null;
+        return estado === "activo" && fi <= now && (!ff || ff > now);
+      }
+    );
+
+    let asignacionConPrecio = new AsignacionPrecio(
+      estudianteUnidad,
+      estudianteUnidad.unidad
+    );
+
+    for (const servicio of serviciosActivos) {
+      asignacionConPrecio = new ServicioDecorator(
+        asignacionConPrecio,
+        servicio,
+        servicio.estudiante_unidad_servicio
+      );
     }
 
-    // Obtener la descripción detallada
     return asignacionConPrecio.getDescripcion();
   }
 
@@ -92,48 +113,68 @@ class ServiciosService {
    * @returns {Promise<object>} - Resultado de la operación
    */
   async agregarServicioAAsignacion(estudianteUnidadId, servicioId) {
-    // Validar que la asignación existe
-    const estudianteUnidad = await EstudianteUnidad.findByPk(estudianteUnidadId);
-    if (!estudianteUnidad) {
-      throw new Error('Asignación no encontrada');
-    }
-
-    // Validar que el servicio existe y está activo
-    const servicio = await Servicio.findOne({
-      where: {
-        id: servicioId,
-        activo: true
+    const estudianteUnidad = await EstudianteUnidad.findByPk(
+      estudianteUnidadId,
+      {
+        include: [{ model: Unidad, as: "unidad" }],
       }
+    );
+    if (!estudianteUnidad) throw new Error("Asignación no encontrada");
+
+    const servicio = await Servicio.findOne({
+      where: { id: servicioId, activo: true },
     });
+    if (!servicio) throw new Error("Servicio no encontrado o inactivo");
+    if (servicio.es_base)
+      throw new Error(
+        "Los servicios base se agregan automáticamente al rentar"
+      );
 
-    if (!servicio) {
-      throw new Error('Servicio no encontrado o inactivo');
-    }
+    // Verificar que el servicio está ofrecido por el rentero para esa unidad
+    const ofertas = estudianteUnidad.unidad.descripcion?.servicios || [];
+    const ofrecido =
+      ofertas.includes(servicio.id) || ofertas.includes(servicio.nombre);
+    if (!ofrecido)
+      throw new Error("El servicio no está ofrecido para esta unidad");
 
-    // VALIDACIÓN: No permitir agregar servicios base manualmente
-    if (servicio.es_base) {
-      throw new Error('Los servicios base se agregan automáticamente al rentar');
-    }
-
-    // Verificar si ya existe la relación
+    // Validar duplicado (existente con cualquier estado)
     const relacionExistente = await EstudianteUnidadServicio.findOne({
       where: {
         estudiante_unidad_id: estudianteUnidadId,
-        servicio_id: servicioId
-      }
+        servicio_id: servicioId,
+      },
     });
-
-    if (relacionExistente) {
-      throw new Error('El servicio ya está agregado a esta asignación');
+    if (relacionExistente && relacionExistente.estado === "activo") {
+      throw new Error("El servicio ya está agregado a esta asignación");
+    }
+    if (relacionExistente && relacionExistente.estado === "pendiente") {
+      throw new Error("El servicio ya está programado para activarse");
     }
 
-    // Crear la relación
-    await EstudianteUnidadServicio.create({
-      estudiante_unidad_id: estudianteUnidadId,
-      servicio_id: servicioId
+    // Determinar si es la primera adquisición del estudiante (no existen servicios activos)
+    const tieneActivos = await EstudianteUnidadServicio.findOne({
+      where: { estudiante_unidad_id: estudianteUnidadId, estado: "activo" },
     });
 
-    // Retornar el cálculo actualizado
+    let fechaInicio = new Date();
+    let estado = "activo";
+    if (tieneActivos) {
+      // si ya tenía servicios activos antes, programar para inicio del mes siguiente
+      const hoy = new Date();
+      fechaInicio = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 1, 0, 0, 0);
+      estado = "pendiente";
+    }
+
+    // Crear relación con snapshot del precio
+    await EstudianteUnidadServicio.create({
+      estudiante_unidad_id: estudianteUnidadId,
+      servicio_id: servicioId,
+      precio_snapshot: servicio.precio,
+      estado,
+      fecha_inicio: fechaInicio,
+    });
+
+    // retornar cálculo actualizado (sólo servicios activos se sumarán)
     return await this.calcularPrecioConServicios(estudianteUnidadId);
   }
 
@@ -144,24 +185,35 @@ class ServiciosService {
    * @returns {Promise<object>} - Resultado de la operación
    */
   async eliminarServicioDeAsignacion(estudianteUnidadId, servicioId) {
-    // VALIDACIÓN: No permitir eliminar servicios base
     const servicio = await Servicio.findByPk(servicioId);
-    if (servicio && servicio.es_base) {
-      throw new Error('No puedes eliminar servicios base');
-    }
+    if (!servicio) throw new Error("Servicio no encontrado");
 
-    const resultado = await EstudianteUnidadServicio.destroy({
+    if (servicio.es_base) throw new Error("No puedes eliminar servicios base");
+
+    const relacion = await EstudianteUnidadServicio.findOne({
       where: {
         estudiante_unidad_id: estudianteUnidadId,
-        servicio_id: servicioId
-      }
+        servicio_id: servicioId,
+      },
     });
 
-    if (resultado === 0) {
-      throw new Error('El servicio no está asociado a esta asignación');
+    if (!relacion)
+      throw new Error("El servicio no está asociado a esta asignación");
+
+    const ahora = new Date();
+
+    if (relacion.estado === "pendiente") {
+      // si estaba pendiente, podemos eliminar el registro
+      await relacion.destroy();
+    } else if (relacion.estado === "activo") {
+      // marcar la cancelación: fecha_fin = ahora y estado = 'cancelado'
+      relacion.estado = "cancelado";
+      relacion.fecha_fin = ahora;
+      await relacion.save();
+    } else {
+      throw new Error("Operación no permitida en el estado actual");
     }
 
-    // Retornar el cálculo actualizado
     return await this.calcularPrecioConServicios(estudianteUnidadId);
   }
 
@@ -171,16 +223,21 @@ class ServiciosService {
    * @returns {Promise<Array>} - Array de servicios asociados
    */
   async obtenerServiciosPorAsignacion(estudianteUnidadId) {
-    const estudianteUnidad = await EstudianteUnidad.findByPk(estudianteUnidadId, {
-      include: [{
-        model: Servicio,
-        as: 'servicios',
-        through: { attributes: ['fecha_agregado'] }
-      }]
-    });
+    const estudianteUnidad = await EstudianteUnidad.findByPk(
+      estudianteUnidadId,
+      {
+        include: [
+          {
+            model: Servicio,
+            as: "servicios",
+            through: { attributes: ["fecha_agregado"] },
+          },
+        ],
+      }
+    );
 
     if (!estudianteUnidad) {
-      throw new Error('Asignación no encontrada');
+      throw new Error("Asignación no encontrada");
     }
 
     return estudianteUnidad.servicios || [];
@@ -192,16 +249,22 @@ class ServiciosService {
    * @param {Object} transaction - Transacción de Sequelize (opcional)
    * @returns {Promise<void>}
    */
-  async agregarServiciosBaseAAsignacion(estudianteUnidadId, transaction = null) {
+  async agregarServiciosBaseAAsignacion(
+    estudianteUnidadId,
+    transaction = null
+  ) {
     const serviciosBase = await this.obtenerServiciosBase();
 
     const options = transaction ? { transaction } : {};
 
     for (const servicio of serviciosBase) {
-      await EstudianteUnidadServicio.create({
-        estudiante_unidad_id: estudianteUnidadId,
-        servicio_id: servicio.id
-      }, options);
+      await EstudianteUnidadServicio.create(
+        {
+          estudiante_unidad_id: estudianteUnidadId,
+          servicio_id: servicio.id,
+        },
+        options
+      );
     }
   }
 }
