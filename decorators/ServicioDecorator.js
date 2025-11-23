@@ -3,7 +3,7 @@
  * Implementa el patrón Decorator para cálculo dinámico de precios
  */
 class ServicioDecorator {
-  constructor(asignacionPrecio, servicio) {
+  constructor(asignacionPrecio, servicio, through = {}) {
     this.asignacionPrecio = asignacionPrecio;
     this.servicio = servicio;
     this.precioServicio =
