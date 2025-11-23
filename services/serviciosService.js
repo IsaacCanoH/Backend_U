@@ -180,34 +180,6 @@ class ServiciosService {
     return row.servicios || [];
   }
 
-  async eliminarServicioDeAsignacion(estudianteUnidadId, servicioId) {
-    const servicio = await Servicio.findByPk(servicioId);
-    if (!servicio) throw new Error("Servicio no encontrado");
-    if (servicio.es_base) throw new Error("No puedes eliminar servicios base");
-
-    const relacion = await EstudianteUnidadServicio.findOne({
-      where: {
-        estudiante_unidad_id: estudianteUnidadId,
-        servicio_id: servicioId,
-      },
-    });
-    if (!relacion)
-      throw new Error("El servicio no está asociado a esta asignación");
-
-    const ahora = new Date();
-    if (relacion.estado === "pendiente") {
-      await relacion.destroy();
-    } else if (relacion.estado === "activo") {
-      relacion.estado = "cancelado";
-      relacion.fecha_fin = ahora;
-      await relacion.save();
-    } else {
-      throw new Error("Operación no permitida en el estado actual");
-    }
-
-    return await this.calcularPrecioConServicios(estudianteUnidadId);
-  }
-
   async obtenerServiciosDisponibles({ soloAdicionales = false } = {}) {
     // construye el where para Sequelize
     const where = { activo: true };
@@ -290,6 +262,7 @@ class ServiciosService {
       throw err;
     }
   }
+
 }
 
 export default new ServiciosService();

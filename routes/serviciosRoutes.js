@@ -6,7 +6,7 @@ import {
   calcularPrecioAsignacion,
   agregarServicioAAsignacion,
   eliminarServicioDeAsignacion,
-  obtenerServiciosPorAsignacion
+  obtenerServiciosPorAsignacion,
 } from '../controllers/serviciosController.js';
 
 const router = express.Router();

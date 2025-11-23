@@ -1,5 +1,5 @@
 import ServiciosService from "../services/serviciosService.js";
-import EstudianteUnidad from '../models/estudiante_unidad.js';
+import EstudianteUnidad from "../models/estudiante_unidad.js";
 
 /**
  * Obtiene todos los servicios disponibles
@@ -221,63 +221,5 @@ export const obtenerServiciosPorAsignacion = async (req, res, next) => {
       });
     }
     next(error);
-  }
-};
-
-export const eliminarServicioAsignacion = async (req, res, next) => {
-  try {
-    const estudianteUnidadId = Number(req.params.estudianteUnidadId);
-    const servicioId = Number(req.params.servicioId);
-    const usuarioId = req.usuario?.id;
-
-    if (!usuarioId)
-      return res
-        .status(401)
-        .json({ success: false, mensaje: "No autenticado" });
-    if (!estudianteUnidadId || isNaN(estudianteUnidadId))
-      return res
-        .status(400)
-        .json({ success: false, mensaje: "estudianteUnidadId inválido" });
-    if (!servicioId || isNaN(servicioId))
-      return res
-        .status(400)
-        .json({ success: false, mensaje: "servicioId inválido" });
-
-    const asign = await EstudianteUnidad.findByPk(estudianteUnidadId);
-    if (!asign)
-      return res
-        .status(404)
-        .json({ success: false, mensaje: "Asignación no encontrada" });
-    if (asign.estudiante_id !== usuarioId)
-      return res
-        .status(403)
-        .json({
-          success: false,
-          mensaje: "No tienes permiso para modificar esta asignación",
-        });
-
-    const resultado = await ServiciosService.eliminarServicioDeAsignacion(
-      estudianteUnidadId,
-      servicioId
-    );
-
-    return res
-      .status(200)
-      .json({
-        success: true,
-        data: resultado,
-        mensaje: "Servicio eliminado/actualizado",
-      });
-  } catch (err) {
-    console.error(
-      "ERROR eliminarServicioAsignacion:",
-      err && (err.stack || err)
-    );
-    return res
-      .status(500)
-      .json({
-        success: false,
-        mensaje: err.message || "Error interno del servidor",
-      });
   }
 };
