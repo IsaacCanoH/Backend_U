@@ -131,9 +131,22 @@ class ServiciosService {
       );
 
     // Verificar que el servicio está ofrecido por el rentero para esa unidad
-    const ofertas = estudianteUnidad.unidad.descripcion?.servicios || [];
-    const ofrecido =
-      ofertas.includes(servicio.id) || ofertas.includes(servicio.nombre);
+    const ofertas = estudianteUnidad.unidad?.descripcion?.servicios || [];
+
+    const ofrecido = ofertas.some((o) => {
+      if (!o) return false;
+      // si la oferta es un objeto con id
+      if (typeof o === "object" && o.id !== undefined && o.id !== null) {
+        return Number(o.id) === Number(servicio.id);
+      }
+      // si la oferta es un objeto con nombre o un string
+      const nombreOferta = typeof o === "object" ? o.nombre : o;
+      return (
+        String(nombreOferta).trim().toLowerCase() ===
+        String(servicio.nombre).trim().toLowerCase()
+      );
+    });
+
     if (!ofrecido)
       throw new Error("El servicio no está ofrecido para esta unidad");
 
@@ -144,6 +157,7 @@ class ServiciosService {
         servicio_id: servicioId,
       },
     });
+
     if (relacionExistente && relacionExistente.estado === "activo") {
       throw new Error("El servicio ya está agregado a esta asignación");
     }

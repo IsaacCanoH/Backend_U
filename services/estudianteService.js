@@ -104,14 +104,12 @@ export const obtenerUnidadesAsignadas = async (estudianteId) => {
     ],
   });
 
-  // Mapear a un arreglo de unidades (clean)
-  // Dentro de obtenerUnidadesAsignadas: en el map
   return relaciones
     .map((r) => {
       const u = r.unidad ? r.unidad.toJSON() : null;
       if (!u) return null;
       return {
-        estudiante_unidad_id: r.id, // <-- agregamos la id de la relación
+        estudiante_unidad_id: r.id, 
         id: u.id,
         nombre: u.nombre,
         precio: u.precio,
