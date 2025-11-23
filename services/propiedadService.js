@@ -2,9 +2,12 @@ import Propiedad from "../models/propiedad.js";
 import Unidad from "../models/unidad.js";
 import Rentero from "../models/rentero.js";
 import Universidad from "../models/universidad.js";
+import Estudiante from "../models/estudiante.js";
+import EstudianteUnidad from "../models/estudiante_unidad.js";  
 
 import sequelize from "../config/baseDeDatos.js";
 import * as documentoService from "./documentoService.js";
+import serviciosService from "./serviciosService.js";
 
 import { Op, fn, col, where } from "sequelize";
 
@@ -816,6 +819,59 @@ class PropiedadService {
     } catch (error) {
       await transaccion.rollback();
       throw manejarErrorRegistro(error);
+    }
+  }
+
+    /**
+   * Asigna un estudiante (por email) a una unidad.
+   * Solo el rentero dueño de la propiedad puede asignar.
+   */
+  async asignarEstudianteAUnidad(unidadId, email, renteroId) {
+    if (!unidadId || isNaN(unidadId)) throw new ErrorAplicacion('ID de unidad inválido', 400);
+    if (!email) throw new ErrorAplicacion('Email requerido', 400);
+
+    const transaccion = await sequelize.transaction();
+    try {
+      // 1) unidad
+      const unidad = await Unidad.findOne({ where: { id: unidadId }, transaction: transaccion });
+      if (!unidad) throw new ErrorAplicacion('Unidad no encontrada', 404);
+
+      // 2) propiedad y permiso del rentero
+      const propiedad = await Propiedad.findOne({ where: { id: unidad.propiedad_id }, transaction: transaccion });
+      if (!propiedad || propiedad.rentero_id !== renteroId) {
+        throw new ErrorAplicacion('No tienes permisos para asignar esta unidad', 403);
+      }
+
+      // 3) estudiante por email (exigir que exista)
+      const estudiante = await Estudiante.findOne({ where: { email }, transaction: transaccion });
+      if (!estudiante) {
+        throw new ErrorAplicacion('Estudiante no encontrado (verifica el correo)', 404);
+      }
+
+      // 4) comprobar relación existente
+      const existente = await EstudianteUnidad.findOne({
+        where: { unidad_id: unidadId, estudiante_id: estudiante.id },
+        transaction: transaccion
+      });
+      if (existente) {
+        throw new ErrorAplicacion('El estudiante ya está relacionado con esta unidad', 409);
+      }
+
+      // 5) crear relación
+      const relacion = await EstudianteUnidad.create({
+        unidad_id: unidadId,
+        estudiante_id: estudiante.id
+      }, { transaction: transaccion });
+
+      // 6) agregar servicios base automáticamente (agua, luz, internet)
+      await serviciosService.agregarServiciosBaseAAsignacion(relacion.id, transaccion);
+
+      await transaccion.commit();
+
+      return { success: true, mensaje: 'Estudiante asignado a la unidad', data: relacion };
+    } catch (error) {
+      await transaccion.rollback();
+      throw error;
     }
   }
 }

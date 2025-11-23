@@ -80,7 +80,8 @@ export const iniciarSesion = async (email, password) => {
       id: rentero.id,
       email: rentero.email,
       nombre: rentero.nombre,
-      apellido: rentero.apellido
+      apellido: rentero.apellido,
+      tipo: 'rentero'
     });
 
     // Retornar datos del usuario sin la contraseña

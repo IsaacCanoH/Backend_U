@@ -16,6 +16,7 @@ import {
   obtenerUnidadPorId,
   actualizarUnidad,
   eliminarUnidad,
+  asignarEstudiante
 } from "../controllers/propiedadController.js";
 
 const router = express.Router();
@@ -195,5 +196,23 @@ router.put(
 );
 
 router.delete("/unidades/:unidadId", autenticarToken, eliminarUnidad);
+
+// Asignar estudiante por email
+router.post(
+  "/unidades/:unidadId/asignar-estudiante",
+  autenticarToken,
+  (req, res, next) => {
+    try {
+      if (req.body && typeof req.body === 'string') {
+        req.body = JSON.parse(req.body);
+      }
+      return next();
+    } catch (e) {
+      return res.status(400).json({ error: 'JSON inválido', detalle: e.message });
+    }
+  },
+  asignarEstudiante
+);
+
 
 export default router;

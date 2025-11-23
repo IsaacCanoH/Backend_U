@@ -211,3 +211,16 @@ export const obtenerUnidadPorId = async (req, res, next) => {
     next(error);
   }
 };
+
+export const asignarEstudiante = async (req, res, next) => {
+  try {
+    const renteroId = req.usuario.id;            
+    const { unidadId } = req.params;
+    const { email } = req.body;
+
+    const resultado = await PropiedadService.asignarEstudianteAUnidad(unidadId, email, renteroId);
+    res.status(200).json(resultado);
+  } catch (error) {
+    next(error);
+  }
+};

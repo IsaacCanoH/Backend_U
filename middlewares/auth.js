@@ -1,5 +1,6 @@
 import { verificarToken } from '../utils/auth/jwt.js';
 import Rentero from '../models/rentero.js';
+import Estudiante from '../models/estudiante.js';
 
 export const autenticarToken = async (req, res, next) => {
   try {
@@ -15,13 +16,22 @@ export const autenticarToken = async (req, res, next) => {
 
     // Verificar el token
     const decoded = verificarToken(token);
-    
-    // Verificar que el usuario aún existe
-    const rentero = await Rentero.findByPk(decoded.id, {
-      attributes: ['id', 'nombre', 'apellido', 'email', 'telefono']
-    });
 
-    if (!rentero) {
+    // Determinar el tipo de usuario y buscar en la tabla correspondiente
+    let usuario = null;
+
+    if (decoded.tipo === 'estudiante') {
+      usuario = await Estudiante.findByPk(decoded.id, {
+        attributes: ['id', 'nombre', 'apellido', 'email', 'telefono']
+      });
+    } else {
+      // Por defecto buscar en renteros (para compatibilidad con tokens antiguos)
+      usuario = await Rentero.findByPk(decoded.id, {
+        attributes: ['id', 'nombre', 'apellido', 'email', 'telefono']
+      });
+    }
+
+    if (!usuario) {
       return res.status(401).json({
         exito: false,
         mensaje: 'Usuario no encontrado'
@@ -29,8 +39,8 @@ export const autenticarToken = async (req, res, next) => {
     }
 
     // Agregar información del usuario al request
-    req.usuario = rentero.toJSON();
-    
+    req.usuario = { ...usuario.toJSON(), tipo: decoded.tipo || 'rentero' };
+
     next();
   } catch (error) {
     return res.status(403).json({
