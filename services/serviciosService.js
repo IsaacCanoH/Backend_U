@@ -52,7 +52,7 @@ class ServiciosService {
         const ff = link.fecha_fin ? new Date(link.fecha_fin) : null;
 
         // excluir si tiene fecha_fin pasada o igual
-        if (ff && ff <= now) return false;
+        // if (ff && ff <= now) return false;
 
         // activos: incluir siempre
         if (estado === "activo") return true;
