@@ -864,7 +864,7 @@ class PropiedadService {
       }, { transaction: transaccion });
 
       // 6) agregar servicios base automáticamente (agua, luz, internet)
-      await serviciosService.agregarServiciosBaseAAsignacion(relacion.id, transaccion);
+      await serviciosService.agregarServiciosBaseAAsignacion(relacion.id, unidad, transaccion);
 
       await transaccion.commit();
 

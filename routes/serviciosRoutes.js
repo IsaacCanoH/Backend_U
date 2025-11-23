@@ -1,7 +1,7 @@
 import express from 'express';
 import { autenticarToken } from '../middlewares/auth.js';
 import {
-  obtenerServiciosDisponibles,
+  serviciosDisponibles,
   obtenerServiciosBase,
   calcularPrecioAsignacion,
   agregarServicioAAsignacion,
@@ -12,7 +12,7 @@ import {
 const router = express.Router();
 
 // Rutas públicas (consultar servicios disponibles)
-router.get('/disponibles', obtenerServiciosDisponibles);
+router.get('/disponibles', serviciosDisponibles);
 router.get('/base', obtenerServiciosBase);
 
 // Rutas protegidas (requieren autenticación)

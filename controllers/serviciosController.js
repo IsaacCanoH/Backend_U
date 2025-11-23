@@ -4,20 +4,17 @@ import ServiciosService from '../services/serviciosService.js';
  * Obtiene todos los servicios disponibles
  * GET /api/servicios/disponibles
  */
-export const obtenerServiciosDisponibles = async (req, res, next) => {
+export const serviciosDisponibles = async (req, res, next) => {
   try {
-    const { solo_adicionales } = req.query;
-    const soloAdicionales = solo_adicionales === 'true';
+    // opcional: ?solo_adicionales=true para traer solo es_base = false
+    const soloAdicionales = String(req.query.solo_adicionales || '').toLowerCase() === 'true';
 
-    const servicios = await ServiciosService.obtenerServiciosDisponibles(soloAdicionales);
+    const servicios = await ServiciosService.obtenerServiciosDisponibles({ soloAdicionales });
 
-    res.status(200).json({
-      success: true,
-      data: servicios,
-      mensaje: 'Servicios obtenidos exitosamente'
-    });
-  } catch (error) {
-    next(error);
+    return res.status(200).json({ success: true, data: servicios });
+  } catch (err) {
+    console.error('ERROR /servicios/disponibles:', err && (err.stack || err));
+    return res.status(500).json({ success: false, mensaje: 'Error interno del servidor' });
   }
 };
 
