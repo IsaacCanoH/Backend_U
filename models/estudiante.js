@@ -15,7 +15,8 @@ const Estudiante = sequelize.define('estudiante', {
     type: DataTypes.STRING
   },
   email: {
-    type: DataTypes.STRING
+    type: DataTypes.STRING,
+    allowNull: false
   },
   password: {
     type: DataTypes.STRING

@@ -7,6 +7,7 @@ import {
   agregarServicioAAsignacion,
   eliminarServicioDeAsignacion,
   obtenerServiciosPorAsignacion,
+  enviarPrefacturaAsignacion
 } from '../controllers/serviciosController.js';
 
 const router = express.Router();
@@ -29,5 +30,13 @@ router.post('/asignacion/:estudianteUnidadId/agregar', autenticarToken, agregarS
 
 // Eliminar un servicio de la asignación de un estudiante
 router.delete('/asignacion/:estudianteUnidadId/servicio/:servicioId', autenticarToken, eliminarServicioDeAsignacion);
+
+// Enviar pre-factura por correo para una asignación
+router.post(
+  '/asignacion/:estudianteUnidadId/enviar-prefactura',
+  autenticarToken,
+  enviarPrefacturaAsignacion
+);
+
 
 export default router;

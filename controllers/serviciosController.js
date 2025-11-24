@@ -223,3 +223,29 @@ export const obtenerServiciosPorAsignacion = async (req, res, next) => {
     next(error);
   }
 };
+
+export const enviarPrefacturaAsignacion = async (req, res, next) => {
+  try {
+    const { estudianteUnidadId } = req.params;
+
+    if (!estudianteUnidadId || isNaN(estudianteUnidadId)) {
+      return res.status(400).json({
+        success: false,
+        mensaje: "ID de asignación inválido",
+      });
+    }
+
+    const detalle = await ServiciosService.enviarPrefacturaPorCorreo(
+      parseInt(estudianteUnidadId)
+    );
+
+    return res.status(200).json({
+      success: true,
+      data: detalle,
+      mensaje: "Pre-factura enviada por correo correctamente",
+    });
+  } catch (error) {
+    console.error("Error al enviar pre-factura:", error);
+    next(error);
+  }
+};

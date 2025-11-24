@@ -5,6 +5,7 @@ import EstudianteUnidadServicio from "../models/estudiante_unidad_servicio.js";
 import AsignacionPrecio from "../decorators/AsignacionPrecio.js";
 import ServicioDecorator from "../decorators/ServicioDecorator.js";
 import sequelize from "../config/baseDeDatos.js";
+import { enviarPrefacturaEmail } from "./prefacturaEmailService.js";
 
 const sameDay = (a, b) => {
   if (!a || !b) return false;
@@ -57,8 +58,10 @@ const getFechaUnionYProximoCorte = async (
 
 class ServiciosService {
   /**
-   * PRE-FACTURA:
-   * Un servicio se cobra en la fechaFactura si:
+   * Calcula el precio total y el desglose para una asignación
+   * como PRE-FACTURA del PRÓXIMO CORTE.
+   *
+   * Un servicio se cobra en ese corte si:
    *  - fecha_inicio <= fechaFactura
    *  - y (fecha_fin es null o fecha_fin > fechaFactura)
    */
@@ -94,50 +97,28 @@ class ServiciosService {
       estudianteUnidadId,
       now
     );
+    const fechaFactura = proximoCorte; // pre-factura para el siguiente corte
 
-    const todosServicios = estudianteUnidad.servicios || [];
+    const serviciosVigentes = (estudianteUnidad.servicios || []).filter(
+      (srv) => {
+        const link = srv.estudiante_unidad_servicio || {};
+        const fi = link.fecha_inicio ? new Date(link.fecha_inicio) : null;
+        const ff = link.fecha_fin ? new Date(link.fecha_fin) : null;
 
-    // 1) buscamos la menor fecha_inicio futura relevante
-    let minFechaInicio = null;
-    for (const srv of todosServicios) {
-      const link = srv.estudiante_unidad_servicio || {};
-      const fi = link.fecha_inicio ? new Date(link.fecha_inicio) : null;
-      const ff = link.fecha_fin ? new Date(link.fecha_fin) : null;
+        // sin fecha_inicio no se puede cobrar
+        if (!fi) return false;
 
-      if (!fi) continue;
-      // si ya terminó antes o en su propia fecha de inicio, ignóralo
-      if (ff && ff <= fi) continue;
+        // debe haber iniciado a más tardar en la fecha de factura
+        if (fi > fechaFactura) return false;
 
-      if (!minFechaInicio || fi < minFechaInicio) {
-        minFechaInicio = fi;
+        // si tiene fecha_fin y es <= a la fecha de factura, ya no se cobra
+        if (ff && ff <= fechaFactura) return false;
+
+        // fi <= fechaFactura y (ff null o > fechaFactura) => activo para ese corte
+        return true;
       }
-    }
+    );
 
-    // 2) fechaFactura = proximoCorte, pero si todos los servicios empiezan
-    //    después de ese corte, saltamos a esa fecha_inicio
-    let fechaFactura = proximoCorte;
-    if (minFechaInicio && minFechaInicio > fechaFactura) {
-      fechaFactura = minFechaInicio;
-    }
-
-    // 3) filtrar los servicios que estarán activos en esa fechaFactura
-    const serviciosVigentes = todosServicios.filter((srv) => {
-      const link = srv.estudiante_unidad_servicio || {};
-      const fi = link.fecha_inicio ? new Date(link.fecha_inicio) : null;
-      const ff = link.fecha_fin ? new Date(link.fecha_fin) : null;
-
-      if (!fi) return false;
-
-      // debe haber iniciado a más tardar en la fecha de factura
-      if (fi > fechaFactura) return false;
-
-      // si tiene fecha_fin y es <= a la fecha de factura, ya no se cobra
-      if (ff && ff <= fechaFactura) return false;
-
-      return true;
-    });
-
-    // componente base (unidad sin extras)
     let asignacionConPrecio = new AsignacionPrecio(
       estudianteUnidad,
       estudianteUnidad.unidad
@@ -152,7 +133,13 @@ class ServiciosService {
       );
     }
 
-    return asignacionConPrecio.getDescripcion();
+    const descripcion = asignacionConPrecio.getDescripcion();
+
+    // añadimos la fecha de corte usada para esta pre-factura
+    return {
+      ...descripcion,
+      fecha_corte: fechaFactura.toISOString(),
+    };
   }
 
   /**
@@ -235,6 +222,7 @@ class ServiciosService {
       fecha_agregado: now,
     });
 
+    // devolvemos la pre-factura del próximo corte con el cambio aplicado
     return await this.calcularPrecioConServicios(estudianteUnidadId);
   }
 
@@ -379,7 +367,20 @@ class ServiciosService {
 
     await relacion.save();
 
+    // devolvemos la pre-factura del próximo corte con el cambio aplicado
     return await this.calcularPrecioConServicios(estudianteUnidadId);
+  }
+
+  /**
+   * Mantiene misma firma para no tocar controllers:
+   * - calcula la pre-factura
+   * - delega el envío al servicio de correo
+   * - retorna el detalle (para el controller)
+   */
+  async enviarPrefacturaPorCorreo(estudianteUnidadId) {
+    const detalle = await this.calcularPrecioConServicios(estudianteUnidadId);
+    await enviarPrefacturaEmail({ estudianteUnidadId, detalle });
+    return detalle;
   }
 }
 
