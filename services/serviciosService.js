@@ -6,57 +6,6 @@ import AsignacionPrecio from "../decorators/AsignacionPrecio.js";
 import ServicioDecorator from "../decorators/ServicioDecorator.js";
 import sequelize from "../config/baseDeDatos.js";
 
-const sameDay = (a, b) => {
-  if (!a || !b) return false;
-  const da = new Date(a);
-  const db = new Date(b);
-  return (
-    da.getFullYear() === db.getFullYear() &&
-    da.getMonth() === db.getMonth() &&
-    da.getDate() === db.getDate()
-  );
-};
-
-const addMonths = (date, months) => {
-  const d = new Date(date);
-  return new Date(
-    d.getFullYear(),
-    d.getMonth() + months,
-    d.getDate(),
-    d.getHours(),
-    d.getMinutes(),
-    d.getSeconds(),
-    d.getMilliseconds()
-  );
-};
-
-const calcularBaseDateYNextPeriodo = async (estudianteUnidadId) => {
-  const now = new Date();
-
-  const existentes = await EstudianteUnidadServicio.findAll({
-    where: { estudiante_unidad_id: estudianteUnidadId },
-    order: [["fecha_inicio", "ASC"]],
-  });
-
-  if (!existentes.length) {
-    return {
-      baseDate: now,
-      nextPeriodo: addMonths(now, 1),
-      existentes,
-    };
-  }
-
-  const baseDate = existentes[0].fecha_inicio
-    ? new Date(existentes[0].fecha_inicio)
-    : now;
-
-  let next = new Date(baseDate);
-  while (next <= now) {
-    next = addMonths(next, 1);
-  }
-
-  return { baseDate, nextPeriodo: next, existentes };
-};
 
 class ServiciosService {
   /**
@@ -103,22 +52,18 @@ class ServiciosService {
         const fi = link.fecha_inicio ? new Date(link.fecha_inicio) : null;
         const ff = link.fecha_fin ? new Date(link.fecha_fin) : null;
 
-        // Si ya terminó (fecha_fin pasada o igual a ahora) => fuera
-        if (ff && ff <= now) return false;
+        // excluir si tiene fecha_fin pasada o igual
+        // if (ff && ff <= now) return false;
 
-        // Pendiente: sólo entra cuando ya llegó su fecha_inicio
+        // activos: incluir siempre
+        if (estado === "activo") return true;
+
+        // pendientes: incluir solo si ya llegó la fecha_inicio
         if (estado === "pendiente") {
           return fi && fi <= now;
         }
 
-        // Activo o cancelado (con fecha_fin en el futuro) siguen contando
-        // hasta que llegue la fecha_fin
-        if (estado === "activo" || estado === "cancelado") {
-          if (fi && fi > now) return false; // aún no empieza
-          return true;
-        }
-
-        // Otros estados => fuera
+        // otros estados (cancelado, etc.) => excluir
         return false;
       }
     );
@@ -184,7 +129,6 @@ class ServiciosService {
         servicio_id: servicioId,
       },
     });
-
     if (relacionExistente && relacionExistente.estado === "activo") {
       throw new Error("El servicio ya está agregado a esta asignación");
     }
@@ -192,29 +136,16 @@ class ServiciosService {
       throw new Error("El servicio ya está programado para activarse");
     }
 
-    const now = new Date();
-    const { baseDate, nextPeriodo, existentes } =
-      await calcularBaseDateYNextPeriodo(estudianteUnidadId);
+    const tieneActivos = await EstudianteUnidadServicio.findOne({
+      where: { estudiante_unidad_id: estudianteUnidadId, estado: "activo" },
+    });
 
-    let fechaInicio;
-    let estado;
-
-    if (!existentes.length) {
-      fechaInicio = baseDate; 
-      estado = "activo";
-    } else {
-      const mismoDiaBaseYAhora = sameDay(baseDate, now);
-      const todosMismoDiaBase = existentes.every((r) =>
-        sameDay(r.fecha_inicio || baseDate, baseDate)
-      );
-
-      if (mismoDiaBaseYAhora && todosMismoDiaBase) {
-        fechaInicio = baseDate;
-        estado = "activo";
-      } else {
-        fechaInicio = nextPeriodo;
-        estado = "pendiente";
-      }
+    let fechaInicio = new Date();
+    let estado = "activo";
+    if (tieneActivos) {
+      const hoy = new Date();
+      fechaInicio = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 1, 0, 0, 0);
+      estado = "pendiente";
     }
 
     await EstudianteUnidadServicio.create({
@@ -286,6 +217,7 @@ class ServiciosService {
         const servicioId = Number(s.id);
         if (!servicioId) continue;
 
+        // comprobar si ya existe la relación
         const existente = await EstudianteUnidadServicio.findOne({
           where: {
             estudiante_unidad_id: estudianteUnidadId,
@@ -295,6 +227,7 @@ class ServiciosService {
         });
 
         if (existente) {
+          // si existe pero no está activo, actualizar a activo
           if (existente.estado !== "activo") {
             existente.estado = "activo";
             existente.fecha_inicio = existente.fecha_inicio || new Date();
@@ -305,6 +238,7 @@ class ServiciosService {
           continue;
         }
 
+        // crear nueva relación (precio_snapshot tomado del objeto)
         await EstudianteUnidadServicio.create(
           {
             estudiante_unidad_id: estudianteUnidadId,
@@ -330,7 +264,8 @@ class ServiciosService {
     }
   }
 
-  async eliminarServicioDeAsignacion(estudianteUnidadId, servicioId) {
+    async eliminarServicioDeAsignacion(estudianteUnidadId, servicioId) {
+    // buscar la relación en la tabla pivote
     const relacion = await EstudianteUnidadServicio.findOne({
       where: {
         estudiante_unidad_id: estudianteUnidadId,
@@ -338,30 +273,23 @@ class ServiciosService {
       },
     });
 
+    // si no existe, lanzar el mensaje que el controller espera (404)
     if (!relacion) {
       throw new Error("El servicio no está asociado a esta asignación");
     }
 
+    // evitar eliminar servicios base
     const servicio = await Servicio.findByPk(servicioId);
     if (servicio && servicio.es_base) {
       throw new Error("No puedes eliminar servicios base");
     }
 
-    const now = new Date();
-    const { baseDate, nextPeriodo } = await calcularBaseDateYNextPeriodo(
-      estudianteUnidadId
-    );
-
-    if (relacion.estado === "pendiente" && relacion.fecha_inicio > now) {
-      relacion.estado = "cancelado";
-      relacion.fecha_fin = relacion.fecha_inicio;
-    } else {
-      relacion.estado = "cancelado";
-      relacion.fecha_fin = nextPeriodo;
-    }
-
+    // "eliminar" el servicio: marcar cancelado y con fecha_fin = ahora
+    relacion.estado = "cancelado";
+    relacion.fecha_fin = new Date();
     await relacion.save();
 
+    // devolver la asignación recalculada (mismo patrón que agregar)
     return await this.calcularPrecioConServicios(estudianteUnidadId);
   }
 }
