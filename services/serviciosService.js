@@ -6,7 +6,6 @@ import AsignacionPrecio from "../decorators/AsignacionPrecio.js";
 import ServicioDecorator from "../decorators/ServicioDecorator.js";
 import sequelize from "../config/baseDeDatos.js";
 
-
 const sameDay = (a, b) => {
   if (!a || !b) return false;
   const da = new Date(a);
@@ -58,12 +57,10 @@ const getFechaUnionYProximoCorte = async (
 
 class ServiciosService {
   /**
-   * Calcula el precio total y el desglose para una asignación,
-   * usando el patrón Decorator sobre los servicios VIGENTES:
-   * - incluir servicios con estado === 'activo'
-   * - incluir servicios con estado === 'cancelado' mientras fecha_fin > now
-   * - incluir servicios con estado === 'pendiente' solo si fecha_inicio <= now
-   * - excluir si fecha_fin existe y <= now
+   * PRE-FACTURA:
+   * Un servicio se cobra en la fechaFactura si:
+   *  - fecha_inicio <= fechaFactura
+   *  - y (fecha_fin es null o fecha_fin > fechaFactura)
    */
   async calcularPrecioConServicios(estudianteUnidadId) {
     const estudianteUnidad = await EstudianteUnidad.findByPk(
@@ -93,31 +90,52 @@ class ServiciosService {
       throw new Error("Unidad asociada no encontrada");
 
     const now = new Date();
-
-    const serviciosVigentes = (estudianteUnidad.servicios || []).filter(
-      (srv) => {
-        const link = srv.estudiante_unidad_servicio || {};
-        const estado = String(link.estado || "activo").toLowerCase();
-        const fi = link.fecha_inicio ? new Date(link.fecha_inicio) : null;
-        const ff = link.fecha_fin ? new Date(link.fecha_fin) : null;
-
-        // si ya terminó, no se cobra
-        if (ff && ff <= now) return false;
-
-        // pendientes: solo cuando llega la fecha_inicio
-        if (estado === "pendiente") {
-          return fi && fi <= now;
-        }
-
-        // activos o cancelados: mientras no haya llegado fecha_fin
-        if (estado === "activo" || estado === "cancelado") {
-          if (fi && fi > now) return false; // aún no empieza
-          return true;
-        }
-
-        return false;
-      }
+    const { proximoCorte } = await getFechaUnionYProximoCorte(
+      estudianteUnidadId,
+      now
     );
+
+    const todosServicios = estudianteUnidad.servicios || [];
+
+    // 1) buscamos la menor fecha_inicio futura relevante
+    let minFechaInicio = null;
+    for (const srv of todosServicios) {
+      const link = srv.estudiante_unidad_servicio || {};
+      const fi = link.fecha_inicio ? new Date(link.fecha_inicio) : null;
+      const ff = link.fecha_fin ? new Date(link.fecha_fin) : null;
+
+      if (!fi) continue;
+      // si ya terminó antes o en su propia fecha de inicio, ignóralo
+      if (ff && ff <= fi) continue;
+
+      if (!minFechaInicio || fi < minFechaInicio) {
+        minFechaInicio = fi;
+      }
+    }
+
+    // 2) fechaFactura = proximoCorte, pero si todos los servicios empiezan
+    //    después de ese corte, saltamos a esa fecha_inicio
+    let fechaFactura = proximoCorte;
+    if (minFechaInicio && minFechaInicio > fechaFactura) {
+      fechaFactura = minFechaInicio;
+    }
+
+    // 3) filtrar los servicios que estarán activos en esa fechaFactura
+    const serviciosVigentes = todosServicios.filter((srv) => {
+      const link = srv.estudiante_unidad_servicio || {};
+      const fi = link.fecha_inicio ? new Date(link.fecha_inicio) : null;
+      const ff = link.fecha_fin ? new Date(link.fecha_fin) : null;
+
+      if (!fi) return false;
+
+      // debe haber iniciado a más tardar en la fecha de factura
+      if (fi > fechaFactura) return false;
+
+      // si tiene fecha_fin y es <= a la fecha de factura, ya no se cobra
+      if (ff && ff <= fechaFactura) return false;
+
+      return true;
+    });
 
     // componente base (unidad sin extras)
     let asignacionConPrecio = new AsignacionPrecio(
@@ -125,7 +143,7 @@ class ServiciosService {
       estudianteUnidad.unidad
     );
 
-    // aplicar decoradores por cada servicio vigente
+    // aplicar decoradores por cada servicio vigente para ese corte
     for (const servicio of serviciosVigentes) {
       asignacionConPrecio = new ServicioDecorator(
         asignacionConPrecio,
@@ -350,9 +368,11 @@ class ServiciosService {
     const fi = relacion.fecha_inicio ? new Date(relacion.fecha_inicio) : null;
 
     if (fi && now < fi) {
+      // canceló antes de que empezara a cobrarse: no entra a ningún corte
       relacion.estado = "cancelado";
       relacion.fecha_fin = now;
     } else {
+      // ya estaba o va a estar en el corte actual: se cobra hasta el siguiente
       relacion.estado = "cancelado";
       relacion.fecha_fin = proximoCorte;
     }
