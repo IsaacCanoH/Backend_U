@@ -6,7 +6,8 @@ import EstudianteUnidadServicio from './estudiante_unidad_servicio.js';
 const EstudianteUnidad = sequelize.define('estudiante_unidad', {
   id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
   estudiante_id: { type: DataTypes.INTEGER, allowNull: false },
-  unidad_id: { type: DataTypes.INTEGER, allowNull: false }
+  unidad_id: { type: DataTypes.INTEGER, allowNull: false },
+  fecha_union: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
 }, {
   timestamps: false,
   tableName: 'estudiante_unidad'

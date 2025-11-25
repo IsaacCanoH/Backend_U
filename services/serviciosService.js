@@ -7,13 +7,63 @@ import ServicioDecorator from "../decorators/ServicioDecorator.js";
 import sequelize from "../config/baseDeDatos.js";
 
 
+const sameDay = (a, b) => {
+  if (!a || !b) return false;
+  const da = new Date(a);
+  const db = new Date(b);
+  return (
+    da.getFullYear() === db.getFullYear() &&
+    da.getMonth() === db.getMonth() &&
+    da.getDate() === db.getDate()
+  );
+};
+
+const addMonths = (date, months) => {
+  const d = new Date(date);
+  return new Date(
+    d.getFullYear(),
+    d.getMonth() + months,
+    d.getDate(),
+    d.getHours(),
+    d.getMinutes(),
+    d.getSeconds(),
+    d.getMilliseconds()
+  );
+};
+
+/**
+ * Usa estudiante_unidad.fecha_union como fecha de corte base
+ * y calcula el siguiente corte a partir de refDate.
+ */
+const getFechaUnionYProximoCorte = async (
+  estudianteUnidadId,
+  refDate = new Date()
+) => {
+  const asignacion = await EstudianteUnidad.findByPk(estudianteUnidadId, {
+    attributes: ["id", "fecha_union"],
+  });
+  if (!asignacion) throw new Error("Asignación no encontrada");
+
+  const fechaUnion = asignacion.fecha_union
+    ? new Date(asignacion.fecha_union)
+    : new Date(refDate);
+
+  let proximoCorte = new Date(fechaUnion);
+  while (proximoCorte <= refDate) {
+    proximoCorte = addMonths(proximoCorte, 1);
+  }
+
+  return { fechaUnion, proximoCorte };
+};
+
 class ServiciosService {
   /**
    * Calcula el precio total y el desglose para una asignación,
    * usando el patrón Decorator sobre los servicios VIGENTES:
-   * - incluir servicios con estado === 'activo' (no exigir fecha_inicio <= now)
+   * - incluir servicios con estado === 'activo'
+   * - incluir servicios con estado === 'cancelado' mientras fecha_fin > now
    * - incluir servicios con estado === 'pendiente' solo si fecha_inicio <= now
-   * - respetar fecha_fin (si existe y <= now => excluir)
+   * - excluir si fecha_fin existe y <= now
    */
   async calcularPrecioConServicios(estudianteUnidadId) {
     const estudianteUnidad = await EstudianteUnidad.findByPk(
@@ -44,7 +94,6 @@ class ServiciosService {
 
     const now = new Date();
 
-    // FILTRO CORREGIDO: incluir activos; pendientes solo si fecha_inicio <= now; excluir por fecha_fin
     const serviciosVigentes = (estudianteUnidad.servicios || []).filter(
       (srv) => {
         const link = srv.estudiante_unidad_servicio || {};
@@ -52,18 +101,20 @@ class ServiciosService {
         const fi = link.fecha_inicio ? new Date(link.fecha_inicio) : null;
         const ff = link.fecha_fin ? new Date(link.fecha_fin) : null;
 
-        // excluir si tiene fecha_fin pasada o igual
-        // if (ff && ff <= now) return false;
+        // si ya terminó, no se cobra
+        if (ff && ff <= now) return false;
 
-        // activos: incluir siempre
-        if (estado === "activo") return true;
-
-        // pendientes: incluir solo si ya llegó la fecha_inicio
+        // pendientes: solo cuando llega la fecha_inicio
         if (estado === "pendiente") {
           return fi && fi <= now;
         }
 
-        // otros estados (cancelado, etc.) => excluir
+        // activos o cancelados: mientras no haya llegado fecha_fin
+        if (estado === "activo" || estado === "cancelado") {
+          if (fi && fi > now) return false; // aún no empieza
+          return true;
+        }
+
         return false;
       }
     );
@@ -74,7 +125,7 @@ class ServiciosService {
       estudianteUnidad.unidad
     );
 
-    // aplicar decoradores por cada servicio vigente (pasar through para precio_snapshot)
+    // aplicar decoradores por cada servicio vigente
     for (const servicio of serviciosVigentes) {
       asignacionConPrecio = new ServicioDecorator(
         asignacionConPrecio,
@@ -88,7 +139,9 @@ class ServiciosService {
 
   /**
    * Agrega un servicio a la asignación (valida oferta por unidad).
-   * Crea la relación con precio_snapshot y estado/fecha_inicio según reglas.
+   * Reglas de fechas:
+   * - Si lo agrega el mismo día de fecha_union => fecha_inicio = hoy, estado = 'activo'
+   * - Si lo agrega después de fecha_union     => fecha_inicio = próximo corte, estado = 'pendiente'
    */
   async agregarServicioAAsignacion(estudianteUnidadId, servicioId) {
     const estudianteUnidad = await EstudianteUnidad.findByPk(
@@ -136,15 +189,22 @@ class ServiciosService {
       throw new Error("El servicio ya está programado para activarse");
     }
 
-    const tieneActivos = await EstudianteUnidadServicio.findOne({
-      where: { estudiante_unidad_id: estudianteUnidadId, estado: "activo" },
-    });
+    const now = new Date();
+    const { fechaUnion, proximoCorte } = await getFechaUnionYProximoCorte(
+      estudianteUnidadId,
+      now
+    );
 
-    let fechaInicio = new Date();
-    let estado = "activo";
-    if (tieneActivos) {
-      const hoy = new Date();
-      fechaInicio = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 1, 0, 0, 0);
+    let fechaInicio;
+    let estado;
+
+    if (sameDay(fechaUnion, now)) {
+      // Lo agregó el mismo día que se unió (fecha corte)
+      fechaInicio = now;
+      estado = "activo";
+    } else {
+      // Lo agregó después: arranca en el siguiente corte
+      fechaInicio = proximoCorte;
       estado = "pendiente";
     }
 
@@ -154,6 +214,7 @@ class ServiciosService {
       precio_snapshot: servicio.precio,
       estado,
       fecha_inicio: fechaInicio,
+      fecha_agregado: now,
     });
 
     return await this.calcularPrecioConServicios(estudianteUnidadId);
@@ -182,17 +243,14 @@ class ServiciosService {
   }
 
   async obtenerServiciosDisponibles({ soloAdicionales = false } = {}) {
-    // construye el where para Sequelize
     const where = { activo: true };
     if (soloAdicionales) where.es_base = false;
 
-    // orden alfabético para UX
     const servicios = await Servicio.findAll({
       where,
       order: [["nombre", "ASC"]],
     });
 
-    // devolver array simple (si usas toJSON no es necesario)
     return servicios.map((s) => ({
       id: s.id,
       nombre: s.nombre,
@@ -217,7 +275,6 @@ class ServiciosService {
         const servicioId = Number(s.id);
         if (!servicioId) continue;
 
-        // comprobar si ya existe la relación
         const existente = await EstudianteUnidadServicio.findOne({
           where: {
             estudiante_unidad_id: estudianteUnidadId,
@@ -227,7 +284,6 @@ class ServiciosService {
         });
 
         if (existente) {
-          // si existe pero no está activo, actualizar a activo
           if (existente.estado !== "activo") {
             existente.estado = "activo";
             existente.fecha_inicio = existente.fecha_inicio || new Date();
@@ -238,7 +294,6 @@ class ServiciosService {
           continue;
         }
 
-        // crear nueva relación (precio_snapshot tomado del objeto)
         await EstudianteUnidadServicio.create(
           {
             estudiante_unidad_id: estudianteUnidadId,
@@ -264,8 +319,12 @@ class ServiciosService {
     }
   }
 
-    async eliminarServicioDeAsignacion(estudianteUnidadId, servicioId) {
-    // buscar la relación en la tabla pivote
+  /**
+   * Cancelar servicio extra:
+   * - Si cancela ANTES de fecha_inicio  => no se cobra, fecha_fin = ahora
+   * - Si cancela DESPUÉS de fecha_inicio => se cobra ciclo completo, fecha_fin = próximo corte
+   */
+  async eliminarServicioDeAsignacion(estudianteUnidadId, servicioId) {
     const relacion = await EstudianteUnidadServicio.findOne({
       where: {
         estudiante_unidad_id: estudianteUnidadId,
@@ -273,23 +332,33 @@ class ServiciosService {
       },
     });
 
-    // si no existe, lanzar el mensaje que el controller espera (404)
     if (!relacion) {
       throw new Error("El servicio no está asociado a esta asignación");
     }
 
-    // evitar eliminar servicios base
     const servicio = await Servicio.findByPk(servicioId);
     if (servicio && servicio.es_base) {
       throw new Error("No puedes eliminar servicios base");
     }
 
-    // "eliminar" el servicio: marcar cancelado y con fecha_fin = ahora
-    relacion.estado = "cancelado";
-    relacion.fecha_fin = new Date();
+    const now = new Date();
+    const { proximoCorte } = await getFechaUnionYProximoCorte(
+      estudianteUnidadId,
+      now
+    );
+
+    const fi = relacion.fecha_inicio ? new Date(relacion.fecha_inicio) : null;
+
+    if (fi && now < fi) {
+      relacion.estado = "cancelado";
+      relacion.fecha_fin = now;
+    } else {
+      relacion.estado = "cancelado";
+      relacion.fecha_fin = proximoCorte;
+    }
+
     await relacion.save();
 
-    // devolver la asignación recalculada (mismo patrón que agregar)
     return await this.calcularPrecioConServicios(estudianteUnidadId);
   }
 }
